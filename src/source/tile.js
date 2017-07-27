@@ -314,6 +314,10 @@ class Tile {
         }
     }
 
+    setMask(mask: any) {
+        console.log(mask);
+    }
+
     hasData() {
         return this.state === 'loaded' || this.state === 'reloading' || this.state === 'expired';
     }
