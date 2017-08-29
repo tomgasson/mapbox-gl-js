@@ -14,7 +14,6 @@ const PosArray = require('../data/pos_array');
 const {ProgramConfiguration} = require('../data/program_configuration');
 const shaders = require('../shaders');
 const Program = require('./program');
-const assert = require('assert');
 const updateTileMasks = require('./tile_mask');
 
 const draw = {
@@ -277,7 +276,7 @@ class Painter {
             const sourceCache = rasterSources[key];
             const coords = sourceCache.getVisibleCoordinates();
             const visibleTiles = coords.map((c)=>{ return sourceCache.getTile(c); });
-            updateTileMasks(visibleTiles);
+            updateTileMasks(visibleTiles, this.gl);
 
         }
         this.isOpaquePass = true;
