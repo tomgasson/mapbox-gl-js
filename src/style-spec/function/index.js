@@ -247,7 +247,7 @@ function findStopLessThanOrEqualTo(stops, input) {
 }
 
 function isFunctionDefinition(value) {
-    return typeof value === 'object' && (value.stops || value.type === 'identity');
+    return typeof value === 'object' && (!!value.stops || value.type === 'identity');
 }
 
 /**
