@@ -1,3 +1,11 @@
+## 10.0.0
+
+* Add expression and heatmap layer support. See Mapbox GL JS v0.40.1 changelog entry for details.
+
+## 9.0.1
+
+* Remove `fast-stable-stringify` dependency (#5152)
+
 ## 9.0.0
 
 * Fix validation error on categorical zoom-and-property functions (#4220)

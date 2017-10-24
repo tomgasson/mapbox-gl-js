@@ -7,16 +7,24 @@ const LngLat = require('../geo/lng_lat');
 const Point = require('@mapbox/point-geometry');
 const Evented = require('../util/evented');
 const ajax = require('../util/ajax');
+const browser = require('../util/browser');
 const EXTENT = require('../data/extent');
 const RasterBoundsArray = require('../data/raster_bounds_array');
 const VertexBuffer = require('../gl/vertex_buffer');
 const VertexArrayObject = require('../render/vertex_array_object');
+const Texture = require('../render/texture');
 
 import type {Source} from './source';
 import type Map from '../ui/map';
 import type Dispatcher from '../util/dispatcher';
 import type Tile from './tile';
 import type Coordinate from '../geo/coordinate';
+
+export type ImageTextureSource =
+  ImageData |
+  HTMLImageElement |
+  HTMLCanvasElement |
+  HTMLVideoElement;
 
 /**
  * A data source containing an image.
@@ -61,9 +69,9 @@ class ImageSource extends Evented implements Source {
     options: any;
     dispatcher: Dispatcher;
     map: Map;
-    texture: WebGLTexture;
+    texture: Texture;
     textureLoaded: boolean;
-    image: HTMLImageElement;
+    image: ImageData;
     centerCoord: Coordinate;
     coord: TileCoord;
     _boundsArray: RasterBoundsArray;
@@ -97,7 +105,7 @@ class ImageSource extends Evented implements Source {
             if (err) {
                 this.fire('error', {error: err});
             } else if (image) {
-                this.image = image;
+                this.image = browser.getImageData(image);
                 this._finishLoading();
             }
         });
@@ -181,7 +189,7 @@ class ImageSource extends Evented implements Source {
         this._prepareImage(this.map.painter.gl, this.image);
     }
 
-    _prepareImage(gl: WebGLRenderingContext, image: HTMLImageElement | HTMLVideoElement | ImageData, resize?: boolean) {
+    _prepareImage(gl: WebGLRenderingContext, image: ImageTextureSource, resize?: boolean) {
         if (!this.boundsBuffer) {
             this.boundsBuffer = new VertexBuffer(gl, this._boundsArray);
         }
@@ -192,17 +200,12 @@ class ImageSource extends Evented implements Source {
 
         if (!this.textureLoaded) {
             this.textureLoaded = true;
-            this.texture = gl.createTexture();
-            gl.bindTexture(gl.TEXTURE_2D, this.texture);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            this.texture = new Texture(gl, image, gl.RGBA);
+            this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
         } else if (resize) {
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-        } else if (image instanceof window.HTMLVideoElement || image instanceof window.ImageData) {
-            gl.bindTexture(gl.TEXTURE_2D, this.texture);
+            this.texture.update(image);
+        } else if (image instanceof window.HTMLVideoElement || image instanceof window.ImageData || image instanceof window.HTMLCanvasElement) {
+            this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
             gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, image);
         }
 
@@ -235,7 +238,7 @@ class ImageSource extends Evented implements Source {
     serialize(): Object {
         return {
             type: 'image',
-            urls: this.options.url,
+            url: this.options.url,
             coordinates: this.coordinates
         };
     }

@@ -9,7 +9,7 @@ const Evented = require('../../../src/util/evented');
 function createSource(options, transformCallback) {
     const source = new VectorTileSource('id', options, { send: function() {} }, options.eventedParent);
     source.onAdd({
-        transform: { angle: 0, pitch: 0, cameraToCenterDistance: 1, cameraToTileDistance: () => { return 1; }, showCollisionBoxes: false },
+        transform: { showCollisionBoxes: false },
         _transformRequest: transformCallback ? transformCallback : (url) => { return { url }; }
     });
 
@@ -223,11 +223,15 @@ test('VectorTileSource', (t) => {
             maxzoom: 22,
             attribution: "Mapbox",
             tiles: ["http://example.com/{z}/{x}/{y}.png"],
+            bounds: [-47, -7, -45, -5]
         });
-        source.setBounds([-47, -7, -45, -5]);
-        t.false(source.hasTile({z: 8, x:96, y: 132}), 'returns false for tiles outside bounds');
-        t.true(source.hasTile({z: 8, x:95, y: 132}), 'returns true for tiles inside bounds');
-        t.end();
+        source.on('data', (e)=>{
+            if (e.sourceDataType === 'metadata') {
+                t.false(source.hasTile({z: 8, x:96, y: 132}), 'returns false for tiles outside bounds');
+                t.true(source.hasTile({z: 8, x:95, y: 132}), 'returns true for tiles inside bounds');
+                t.end();
+            }
+        });
     });
 
     t.test('does not error on invalid bounds', (t)=>{
@@ -236,10 +240,15 @@ test('VectorTileSource', (t) => {
             maxzoom: 22,
             attribution: "Mapbox",
             tiles: ["http://example.com/{z}/{x}/{y}.png"],
+            bounds: [-47, -7, -45, 91]
         });
-        source.setBounds([-47, -7, -45, 91]);
-        t.deepEqual(source.tileBounds.bounds, {_sw:{lng: -47, lat: -7}, _ne:{lng: -45, lat: 90}}, 'converts invalid bounds to closest valid bounds');
-        t.end();
+
+        source.on('data', (e)=>{
+            if (e.sourceDataType === 'metadata') {
+                t.deepEqual(source.tileBounds.bounds, {_sw:{lng: -47, lat: -7}, _ne:{lng: -45, lat: 90}}, 'converts invalid bounds to closest valid bounds');
+                t.end();
+            }
+        });
     });
 
     t.test('respects TileJSON.bounds when loaded from TileJSON', (t)=>{

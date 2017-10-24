@@ -1,17 +1,21 @@
 // @flow
 
 const FeatureIndex = require('../data/feature_index');
-const CollisionTile = require('../symbol/collision_tile');
+const {performSymbolLayout} = require('../symbol/symbol_layout');
 const CollisionBoxArray = require('../symbol/collision_box');
 const DictionaryCoder = require('../util/dictionary_coder');
 const SymbolBucket = require('../data/bucket/symbol_bucket');
 const util = require('../util/util');
 const assert = require('assert');
+const {makeImageAtlas} = require('../render/image_atlas');
+const {makeGlyphAtlas} = require('../render/glyph_atlas');
 
 import type TileCoord from './tile_coord';
 import type {Bucket} from '../data/bucket';
 import type Actor from '../util/actor';
 import type StyleLayerIndex from '../style/style_layer_index';
+import type {StyleImage} from '../style/style_image';
+import type {StyleGlyph} from '../style/style_glyph';
 import type {
     WorkerTileParameters,
     WorkerTileCallback,
@@ -21,13 +25,10 @@ class WorkerTile {
     coord: TileCoord;
     uid: string;
     zoom: number;
+    pixelRatio: number;
     tileSize: number;
     source: string;
     overscaling: number;
-    angle: number;
-    pitch: number;
-    cameraToCenterDistance: number;
-    cameraToTileDistance: number;
     showCollisionBoxes: boolean;
 
     status: 'parsing' | 'done';
@@ -43,13 +44,10 @@ class WorkerTile {
         this.coord = params.coord;
         this.uid = params.uid;
         this.zoom = params.zoom;
+        this.pixelRatio = params.pixelRatio;
         this.tileSize = params.tileSize;
         this.source = params.source;
         this.overscaling = params.overscaling;
-        this.angle = params.angle;
-        this.pitch = params.pitch;
-        this.cameraToCenterDistance = params.cameraToCenterDistance;
-        this.cameraToTileDistance = params.cameraToTileDistance;
         this.showCollisionBoxes = params.showCollisionBoxes;
     }
 
@@ -106,6 +104,7 @@ class WorkerTile {
                     index: featureIndex.bucketLayerIDs.length,
                     layers: family,
                     zoom: this.zoom,
+                    pixelRatio: this.pixelRatio,
                     overscaling: this.overscaling,
                     collisionBoxArray: this.collisionBoxArray
                 });
@@ -114,20 +113,6 @@ class WorkerTile {
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }
         }
-
-
-        const done = (collisionTile) => {
-            this.status = 'done';
-
-            const transferables = [];
-
-            callback(null, {
-                buckets: serializeBuckets(util.values(buckets), transferables),
-                featureIndex: featureIndex.serialize(transferables),
-                collisionTile: collisionTile.serialize(transferables),
-                collisionBoxArray: this.collisionBoxArray.serialize()
-            }, transferables);
-        };
 
         // Symbol buckets must be placed in reverse order.
         this.symbolBuckets = [];
@@ -139,86 +124,67 @@ class WorkerTile {
             }
         }
 
-        if (this.symbolBuckets.length === 0) {
-            return done(new CollisionTile(this.angle, this.pitch, this.cameraToCenterDistance, this.cameraToTileDistance, this.collisionBoxArray));
+        let error: ?Error;
+        let glyphMap: ?{[string]: {[number]: ?StyleGlyph}};
+        let imageMap: ?{[string]: StyleImage};
+
+        const stacks = util.mapObject(options.glyphDependencies, (glyphs) => Object.keys(glyphs).map(Number));
+        if (Object.keys(stacks).length) {
+            actor.send('getGlyphs', {uid: this.uid, stacks}, (err, result) => {
+                if (!error) {
+                    error = err;
+                    glyphMap = result;
+                    maybePrepare.call(this);
+                }
+            });
+        } else {
+            glyphMap = {};
         }
 
-        let deps = 0;
-        let icons = Object.keys(options.iconDependencies);
-        let stacks = util.mapObject(options.glyphDependencies, (glyphs) => Object.keys(glyphs).map(Number));
+        const icons = Object.keys(options.iconDependencies);
+        if (icons.length) {
+            actor.send('getImages', {icons}, (err, result) => {
+                if (!error) {
+                    error = err;
+                    imageMap = result;
+                    maybePrepare.call(this);
+                }
+            });
+        } else {
+            imageMap = {};
+        }
 
-        const gotDependency = (err) => {
-            if (err) return callback(err);
-            deps++;
-            if (deps === 2) {
-                const collisionTile = new CollisionTile(
-                    this.angle,
-                    this.pitch,
-                    this.cameraToCenterDistance,
-                    this.cameraToTileDistance,
-                    this.collisionBoxArray);
+        maybePrepare.call(this);
+
+        function maybePrepare() {
+            if (error) {
+                return callback(error);
+            } else if (glyphMap && imageMap) {
+                const glyphAtlas = makeGlyphAtlas(glyphMap);
+                const imageAtlas = makeImageAtlas(imageMap);
 
                 for (const bucket of this.symbolBuckets) {
                     recalculateLayers(bucket, this.zoom);
 
-                    bucket.prepare(stacks, icons);
-                    bucket.place(collisionTile, this.showCollisionBoxes);
+                    performSymbolLayout(bucket, glyphMap, glyphAtlas.positions, imageMap, imageAtlas.positions, this.showCollisionBoxes);
                 }
 
-                done(collisionTile);
+                this.status = 'done';
+
+                const transferables = [
+                    glyphAtlas.image.data.buffer,
+                    imageAtlas.image.data.buffer
+                ];
+
+                callback(null, {
+                    buckets: serializeBuckets(util.values(buckets), transferables),
+                    featureIndex: featureIndex.serialize(transferables),
+                    collisionBoxArray: this.collisionBoxArray.serialize(),
+                    glyphAtlasImage: glyphAtlas.image,
+                    iconAtlasImage: imageAtlas.image
+                }, transferables);
             }
-        };
-
-        if (Object.keys(stacks).length) {
-            actor.send('getGlyphs', {uid: this.uid, stacks: stacks}, (err, newStacks) => {
-                stacks = newStacks;
-                gotDependency(err);
-            });
-        } else {
-            gotDependency();
         }
-
-        if (icons.length) {
-            actor.send('getIcons', {icons: icons}, (err, newIcons) => {
-                icons = newIcons;
-                gotDependency(err);
-            });
-        } else {
-            gotDependency();
-        }
-    }
-
-    redoPlacement(angle: number, pitch: number, cameraToCenterDistance: number, cameraToTileDistance: number, showCollisionBoxes: boolean) {
-        this.angle = angle;
-        this.pitch = pitch;
-        this.cameraToCenterDistance = cameraToCenterDistance;
-        this.cameraToTileDistance = cameraToTileDistance;
-
-        if (this.status !== 'done') {
-            return {};
-        }
-
-        const collisionTile = new CollisionTile(
-            this.angle,
-            this.pitch,
-            this.cameraToCenterDistance,
-            this.cameraToTileDistance,
-            this.collisionBoxArray);
-
-        for (const bucket of this.symbolBuckets) {
-            recalculateLayers(bucket, this.zoom);
-
-            bucket.place(collisionTile, showCollisionBoxes);
-        }
-
-        const transferables = [];
-        return {
-            result: {
-                buckets: serializeBuckets(this.symbolBuckets, transferables),
-                collisionTile: collisionTile.serialize(transferables)
-            },
-            transferables: transferables
-        };
     }
 }
 

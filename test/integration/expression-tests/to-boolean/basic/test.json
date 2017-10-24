@@ -1,5 +1,4 @@
 {
-  "expectExpressionType": null,
   "expression": ["to-boolean", ["get", "x"]],
   "inputs": [
     [{}, {}],
@@ -16,17 +15,8 @@
       "result": "success",
       "isFeatureConstant": false,
       "isZoomConstant": true,
-      "type": "Boolean"
+      "type": "boolean"
     },
-    "outputs": [
-      {"error": "Property 'x' not found in feature.properties"},
-      true,
-      false,
-      false,
-      true,
-      false,
-      true,
-      false
-    ]
+    "outputs": [false, true, false, false, true, false, true, false]
   }
 }

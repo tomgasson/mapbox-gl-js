@@ -1,18 +1,23 @@
 'use strict';
 
-const assert = require('assert');
 const path = require('path');
 const harness = require('./harness');
 const diff = require('diff');
 const fs = require('fs');
-const stringify = require('json-stringify-pretty-compact');
+const compactStringify = require('json-stringify-pretty-compact');
 
-let linter;
-try {
-    const Linter = require('eslint').Linter;
-    linter = new Linter();
-} catch (_) {
-    // eslint-disable-line
+// we have to handle this edge case here because we have test fixtures for this
+// edge case, and we don't want UPDATE=1 to mess with them
+function stringify(v) {
+    let s = compactStringify(v);
+    // http://timelessrepo.com/json-isnt-a-javascript-subset
+    if (s.indexOf('\u2028') >= 0) {
+        s = s.replace(/\u2028/g, '\\u2028');
+    }
+    if (s.indexOf('\u2029') >= 0) {
+        s = s.replace(/\u2029/g, '\\u2029');
+    }
+    return s;
 }
 
 const floatPrecision = 6; // in decimal sigfigs
@@ -64,37 +69,12 @@ exports.run = function (implementation, options, runExpressionTest) {
             const dir = path.join(directory, params.group, params.test);
 
             if (process.env.UPDATE) {
-                delete result.compiled.functionSource;
                 fixture.expected = result;
                 fs.writeFile(path.join(dir, 'test.json'), `${stringify(fixture, null, 2)}\n`, done);
                 return;
             }
 
             const expected = fixture.expected;
-
-            if (result.compiled.functionSource) {
-                assert(linter);
-                params.compiledJs = result.compiled.functionSource;
-                delete result.compiled.functionSource;
-                let lint = linter.verify(params.compiledJs, {
-                    parserOptions: { ecmaVersion: 5 }
-                }, {filename: dir});
-                if (lint.filter(message => message.fatal).length > 0) {
-                    result.compiled.lintErrors = lint;
-                } else {
-                    const code = params.compiledJs.replace(/\{/g, '{\n');
-                    lint = linter.verifyAndFix(code, {
-                        parserOptions: { ecmaVersion: 5 },
-                        rules: {
-                            indent: ['error', 2]
-                        }
-                    }, {filename: dir});
-                    if (lint.fixed) {
-                        params.compiledJs = lint.output;
-                    }
-                }
-            }
-
             const compileOk = deepEqual(result.compiled, expected.compiled);
 
             const evalOk = compileOk && deepEqual(result.outputs, expected.outputs);

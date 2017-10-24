@@ -6,6 +6,7 @@ const loadTileJSON = require('./load_tilejson');
 const normalizeURL = require('../util/mapbox').normalizeTileURL;
 const TileBounds = require('./tile_bounds');
 const ResourceType = require('../util/ajax').ResourceType;
+const browser = require('../util/browser');
 
 import type {Source} from './source';
 import type TileCoord from './tile_coord';
@@ -43,8 +44,8 @@ class VectorTileSource extends Evented implements Source {
         this.tileSize = 512;
         this.reparseOverscaled = true;
         this.isTileClipped = true;
-        util.extend(this, util.pick(options, ['url', 'scheme', 'tileSize']));
 
+        util.extend(this, util.pick(options, ['url', 'scheme', 'tileSize']));
         this._options = util.extend({ type: 'vector' }, options);
 
         if (this.tileSize !== 512) {
@@ -62,7 +63,7 @@ class VectorTileSource extends Evented implements Source {
                 this.fire('error', err);
             } else if (tileJSON) {
                 util.extend(this, tileJSON);
-                this.setBounds(tileJSON.bounds);
+                if (tileJSON.bounds) this.tileBounds = new TileBounds(tileJSON.bounds, this.minzoom, this.maxzoom);
 
                 // `content` is included here to prevent a race condition where `Style#_updateSources` is called
                 // before the TileJSON arrives. this makes sure the tiles needed are loaded once TileJSON arrives
@@ -71,13 +72,6 @@ class VectorTileSource extends Evented implements Source {
                 this.fire('data', {dataType: 'source', sourceDataType: 'content'});
             }
         });
-    }
-
-    setBounds(bounds?: [number, number, number, number]) {
-        this.bounds = bounds;
-        if (bounds) {
-            this.tileBounds = new TileBounds(bounds, this.minzoom, this.maxzoom);
-        }
     }
 
     hasTile(coord: TileCoord) {
@@ -104,15 +98,12 @@ class VectorTileSource extends Evented implements Source {
             tileSize: this.tileSize * overscaling,
             type: this.type,
             source: this.id,
+            pixelRatio: browser.devicePixelRatio,
             overscaling: overscaling,
-            angle: this.map.transform.angle,
-            pitch: this.map.transform.pitch,
-            cameraToCenterDistance: this.map.transform.cameraToCenterDistance,
-            cameraToTileDistance: this.map.transform.cameraToTileDistance(tile),
             showCollisionBoxes: this.map.showCollisionBoxes
         };
 
-        if (!tile.workerID || tile.state === 'expired') {
+        if (tile.workerID === undefined || tile.state === 'expired') {
             tile.workerID = this.dispatcher.send('loadTile', params, done.bind(this));
         } else if (tile.state === 'loading') {
             // schedule tile reloading after it has been loaded
@@ -131,11 +122,6 @@ class VectorTileSource extends Evented implements Source {
 
             if (this.map._refreshExpiredTiles) tile.setExpiryData(data);
             tile.loadVectorData(data, this.map.painter);
-
-            if (tile.redoWhenDone) {
-                tile.redoWhenDone = false;
-                tile.redoPlacement(this);
-            }
 
             callback(null);
 
